@@ -26,29 +26,54 @@
                "This is my first post"
                (list "First comment!")))))
 
+(define SVC_OUTCOME (mcons "status" "_"))
+
 ; blog-insert-post!: blog post -> void
 ; Consumes a blog and a post, adds the post at the top of the blog.
+; error-checking here: TODO
+; TRANSACTIONS ?
 (define (blog-insert-post! a-blog a-post)
-  (set-blog-posts! a-blog
-                   (cons a-post (blog-posts a-blog))))
+  (set-blog-posts! a-blog (cons a-post (blog-posts a-blog)))
+  )
+
+(define (blog-insert-post-comment! a-blog a-post)
+  (let ([apo (find-post-by-id (blog-posts a-blog) (post-id a-post))])
+    (if (null? apo) (set-mcdr! SVC_OUTCOME "404") (post-insert-comment! apo (post-comments a-post))))
+  )
+
+; blog-update-post!: blog post -> void
+; Consumes a blog and a post, add the post to the top of the blog if the post is a new one 
+; or update an existing post title, post body
+(define (blog-update-post! a-blog a-post pid)
+  (let ([apo (find-post-by-id (blog-posts a-blog) pid)])
+    (cond
+      [(null? apo) (set-blog-posts! a-blog (cons a-post (blog-posts a-blog)))]
+      [else (set-post-title! apo (post-title a-post)) (set-post-body! apo (post-body a-post))])
+    )
+  )
+
 
 ; post-insert-comment!: post string -> void
 ; Consumes a post and a comment string.  As a side-efect,
 ; adds the comment to the bottom of the post's list of comments.
+; error-checking here: TODO
 (define (post-insert-comment! a-post a-comment)
-  (set-post-comments!
-   a-post
-   (append (post-comments a-post) (list a-comment))))
+  (set-post-comments! a-post
+                      (append (if (null? (post-comments a-post)) '() (post-comments a-post)) (list a-comment)))
+  )
 
 
 ; parse-post: bindings -> post
 ; Extracts a post out of the bindings.
+; error-checking here: TODO
 (define (parse-post bindings)
   (post (extract-binding/single 'id bindings) (extract-binding/single 'title bindings)
         (extract-binding/single 'body bindings)
+        (list (extract-binding/single 'comment bindings))))
+
+(define (parse-post-comment bindings)
+  (post (extract-binding/single 'id bindings) "_" "_"
         (extract-binding/single 'comment bindings)))
-
-
 
 
 
@@ -58,14 +83,17 @@
   (blog-dispatch request))
 
 ; the url format is: http://localhost:{port}/.../... (examples below)
+; "xm""blog" resolve to /xml/blog
+; "xml""blog""post" (string-arg) resolve to /xml/blog/post/id-of-xyz-post
 (define-values (blog-dispatch blog-url)
   (dispatch-rules
-   [("xml""blog") #:method "get" get-blog-xml] ; /xml/blog
-   [("xml""blog") #:method "post" add-post-xml] ; /xml/blog
-   [("xml""blog""post" (string-arg)) #:method "get" get-post-xml] ; /xml/blog/post/first-post
-   [("posts" (string-arg)) review-post] 
-   [("archive" (integer-arg) (integer-arg)) review-archive]
+   [("xml""blog") #:method "get" get-blog-xml] ; /xml/blog .get all posts from the blog
+   [("xml""blog""post") #:method "post" add-post-xml] ; /xml/blog/post .add a post into the blog
+   [("xml""blog""post" (string-arg)) #:method "get" get-post-xml] ; /xml/blog/post/xyz-post-id
+   [("xml""blog""post""comment") #:method "post" add-post-comment-xml] ; /xml/blog/post/comment
    [else render-not-implemented]))
+
+
 
 (define (render-not-implemented req)
   (response 501 #"Not Implemented" (current-seconds) #f null void)  
@@ -74,34 +102,26 @@
 (define (render-under-construction req)
   (response/xexpr
    '(html
-     (head (title "My Blog"))
+     (head (title "Restkit Blog"))
      (body (h1 "Under construction"))))  
   )
 
-(define (review-post req p) `(review-post ,p))
-(define (review-archive req y m) `(review-archive ,y ,m))
 
-(define (print-req-raw request)
-  (printf (bindings-assq-all #"title" (request-bindings/raw request)))
-  )
+; insert or update a post into the BLOG list of post
+(define (update-post-xml request p)
+  (blog-update-post!
+   BLOG (parse-post (request-bindings request)) p)
+  (response/xexpr #:mime-type #"text/xml"   
+                  `(status "Success")))
 
-(define (print-req-params request)
-  (match (bindings-assq #"title" (request-bindings/raw request))
-    [(struct binding (id))
-     (printf "I got a params " (bytes->string/utf-8 id))]
-    [_ (struct binding (id)) (printf "I got no params ")])) 
-
-(define (get-params request)
-  (match
-      (bindings-assq
-       #"title"
-       (request-bindings/raw request))
-    [(? binding:form? b)
-     (bytes->string/utf-8
-      (binding:form-value b))]
-    [_
-     (print-req-raw request)]))
- 
+; insert a comment into a post
+(define (add-post-comment-xml request)
+  (blog-insert-post-comment!
+   BLOG (parse-post-comment (request-bindings request)))
+  (if (equal? (mcdr SVC_OUTCOME) "404") 
+      (response 404 #"Not Found" (current-seconds) #f null void)
+      (response/xexpr #:mime-type #"text/xml"   
+                      `(status "Success"))))
 
 ; insert a post into the BLOG list of post
 (define (add-post-xml request)
